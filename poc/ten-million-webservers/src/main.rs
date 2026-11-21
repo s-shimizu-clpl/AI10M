@@ -1,4 +1,5 @@
 // AArch64 guest from webserver_raw_syscalls.c, with LFI-style syscall calls.
+#[cfg(target_arch = "aarch64")]
 std::arch::global_asm!(
     r#"
 .text
@@ -148,6 +149,23 @@ http_reply:
 "#,
     options(raw),
 );
+
+// The same guest for x86_64. Syscall numbers differ per architecture, so they
+// come from libc to match dispatch_syscall below.
+#[cfg(target_arch = "x86_64")]
+std::arch::global_asm!(
+    include_str!("guest_x86_64.s"),
+    sys_socket = const libc::SYS_socket,
+    sys_bind = const libc::SYS_bind,
+    sys_listen = const libc::SYS_listen,
+    sys_accept = const libc::SYS_accept,
+    sys_recvfrom = const libc::SYS_recvfrom,
+    sys_sendto = const libc::SYS_sendto,
+    sys_close = const libc::SYS_close,
+);
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+compile_error!("the guest is implemented only for aarch64 and x86_64");
 
 mod network;
 mod network_af_xdp;
