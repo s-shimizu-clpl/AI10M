@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Provision both VMs once; run the server and client scripts in separate terminals.
+# Running it again restarts both VMs (e.g. after a host reboot or to change
+# CLIENT_CPUS) and skips the build on VMs that already run the custom kernel.
 set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(cd ../.. && pwd)
 state=$repo/bin/ten-million-webservers-vm
 guest=/home/ubuntu/ten-million-webservers
+client_cpus=${CLIENT_CPUS:-3}
+[[ $client_cpus =~ ^[1-9][0-9]*$ ]] || { echo 'CLIENT_CPUS must be a positive integer.' >&2; exit 1; }
 mkdir -p "$state"/{cache,server,client,seed}
 
 # Supported hosts: Apple Silicon macOS (HVF) and x86_64 Linux such as a
@@ -71,9 +75,21 @@ if [[ ! -f $state/seed.iso ]]; then
 fi
 
 
+# Shut down a VM left running by an earlier invocation.
+stop_vm() {
+    local pid
+    pid=$(cat "$state/$1/qemu.pid" 2>/dev/null) || return 0
+    # A stale pid file after a host reboot may name an unrelated process.
+    [[ $(ps -p "$pid" -o comm= 2>/dev/null) == *qemu-system* ]] || return 0
+    ssh_vm "$1" 'sudo poweroff' 2>/dev/null || true
+    for _ in $(seq 60); do kill -0 "$pid" 2>/dev/null || return 0; sleep 1; done
+    kill "$pid" 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+}
+
 create_vm() {
     local role=$1 cores=1 port=2238 octet=1 link=on
-    if [[ $role == client ]]; then cores=3; port=2239; octet=2; link=off; fi
+    if [[ $role == client ]]; then cores=$client_cpus; port=2239; octet=2; link=off; fi
     [[ -f $state/$role/disk.qcow2 ]] || qemu-img create -f qcow2 -F qcow2 \
         -b "$state/cache/ubuntu-$image_arch.img" "$state/$role/disk.qcow2" 40G
     [[ $role != server ]] || rm -f "$state/link.sock"
@@ -108,6 +124,11 @@ create_vm() {
 }
 
 configure_vm() {
+    if [[ $(ssh_vm "$1" uname -r) == 7.3.4-afxdp ]]; then
+        echo "$1: already provisioned, skipping the build."
+        ssh_vm "$1" 'sudo cloud-init status --wait' >/dev/null
+        return
+    fi
     COPYFILE_DISABLE=1 tar --no-xattrs -cf - Cargo.toml Cargo.lock build.rs src kernel*.config |
         ssh_vm "$1" "mkdir -p '$guest'; tar -mxf - -C '$guest'"
     # Run this same guest setup on both VMs.
@@ -181,7 +202,6 @@ neigh replace 192.0.2.1 lladdr 52:54:00:ab:00:01 nud permanent dev enp0s2
 route replace 10.0.0.0/7 via 192.0.2.1 dev enp0s2
 NET
 ip netns exec smol-client sysctl -qw net.ipv4.tcp_max_tw_buckets=65536
-ip netns exec smol-client sh -c 'echo 6 > /sys/class/net/enp0s2/queues/rx-0/rps_cpus'
 NETWORK
 sudo chmod +x /var/lib/cloud/scripts/per-boot/ten-million-network
 
@@ -239,9 +259,12 @@ GUEST
     ssh_vm "$1" 'sudo cloud-init status --wait'
 }
 
+# The client connects to the server's link socket, so stop it first.
+stop_vm client
+stop_vm server
 for vm in server client; do
     create_vm "$vm"
     configure_vm "$vm"
 done
-echo 'Ready: server 1 CPU / 10 GiB, client 3 CPUs / 10 GiB.'
+echo "Ready: server 1 CPU / 10 GiB, client $client_cpus CPUs / 10 GiB."
 echo 'Run ./run_server_vm.sh dpdk, then ./run_client_vm.sh in another terminal.'

@@ -25,13 +25,20 @@ sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-cli
 sudo usermod -aG kvm "$USER"   # log in again afterwards; VT-x/AMD-V must be enabled in firmware
 ```
 
-The host needs about 20 GiB of free RAM for the two VMs. Then:
+The host needs about 20 GiB of free RAM for the two VMs, and at least 8 cores: the server's DPDK
+and AF_XDP loops keep one core busy, and the client, QEMU's link threads and the host need the rest.
+Then:
 
 ```sh
 ./init_vms.sh             # once: creates the VMs, builds everything, reboots into the custom kernel
 ./run_server_vm.sh dpdk   # dpdk | tap | tun | af_xdp; LISTENERS=<n> overrides 10000000
 ./run_client_vm.sh        # in another terminal; DURATION and CONCURRENCY are optional
 ```
+
+The client is the first bottleneck with the fast backends. `CLIENT_CPUS=<n> ./init_vms.sh` gives the
+client VM `n` vCPUs (default 3); `run_client_vm.sh` sizes oha's threads and RPS from the VM's CPUs.
+Running `init_vms.sh` again restarts both VMs, for example after a host reboot, and skips the build
+on VMs that were already provisioned.
 
 VM state lives in `bin/ten-million-webservers-vm` at the repository root.
 
