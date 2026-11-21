@@ -42,3 +42,27 @@ on VMs that were already provisioned.
 
 VM state lives in `bin/ten-million-webservers-vm` at the repository root.
 
+## Results on bare-metal x86_64
+
+Host: AMD Ryzen 7 4800H (8 cores, SMT off), 32 GiB, Ubuntu 24.04, KVM. 10,000,000 listeners on the
+1-vCPU server, `DURATION=60`, every run 100% successful.
+
+| Backend | Client vCPUs | Concurrency | Requests/sec | p50 | p99 |
+| --- | --- | --- | --- | --- | --- |
+| dpdk | 5 | 512 | 107,605 | 3.7 ms | 49.9 ms |
+| dpdk | 3 | 512 | 46,689 | 8.2 ms | 46.7 ms |
+| dpdk | 3 | 64 | 48,311 | 1.0 ms | 4.3 ms |
+| af_xdp | 3 | 512 | 48,456 | 8.5 ms | 23.3 ms |
+| tun | 3 | 512 | 26,414 | 9.0 ms | 224 ms |
+| tap | 3 | 512 | 25,154 | 17.0 ms | 51.8 ms |
+
+- With 3 client vCPUs, all of them run at 100% and cap DPDK and AF_XDP at ~48k req/s. TUN and TAP
+  stay below that cap, so their numbers are server-bound.
+- With 5 client vCPUs, the host runs out of cores (1% idle): the server vCPU, five client vCPUs and
+  QEMU's two `-netdev stream` link threads (~90% each) use all 8. 107k req/s is therefore the limit
+  of this host, not of the server.
+- Shrinking the listeners from 10M to 100k changed DPDK throughput by only 3% (25.8k vs 26.5k req/s
+  on a 4-core host), so the number of resident listeners barely affects the request path.
+- A 4-core laptop CPU (Core i5-8265U) saturates at ~26k req/s with millisecond scheduling delays,
+  because the VMs' 4 vCPUs plus QEMU's link threads oversubscribe its cores.
+
