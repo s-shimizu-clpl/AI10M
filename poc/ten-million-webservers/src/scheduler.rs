@@ -24,7 +24,7 @@ pub(super) struct Task {
     fd_client: i32, // Client file descriptor
 }
 
-// enter_guest accesses these fields at fixed AArch64 assembly offsets.
+// enter_guest accesses these fields at fixed assembly offsets (AArch64 and x86_64).
 const _: () = {
     assert!(std::mem::size_of::<Task>() == 16);
     assert!(std::mem::offset_of!(Task, pc) == 0);
